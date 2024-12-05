@@ -28,7 +28,7 @@ def preprocess_data(df):
     required_columns = ['concept:name', 'time:timestamp', 'org:resource', 'case:concept:name', 'org:role']
     for col in required_columns:
         if col not in df.columns:
-            raise ValueError(f"Отсутствует обязательный столбец: {col}")
+            df[col] = np.nan
 
     df.replace(['UNKNOWN', 'UNDEFINED'], np.nan, inplace=True)
     df.dropna(subset=['concept:name', 'time:timestamp'], inplace=True)
@@ -56,6 +56,14 @@ def preprocess_data(df):
     single_event_cases = case_sizes[case_sizes == 1].index
     df = df[~df['case:concept:name'].isin(single_event_cases)]
 
+    df.drop_duplicates(subset=['case:concept:name', 'time:timestamp'], inplace=True)
+
+    df['time:timestamp'] = (df['time:timestamp'] - df['time:timestamp'].min()) / (
+            df['time:timestamp'].max() - df['time:timestamp'].min())
+
+    valid_resources = ['Resource1', 'Resource2', 'Resource3']
+    df = df[df['org:resource'].isin(valid_resources)]
+
     return df
 
 
@@ -68,15 +76,13 @@ def construct_graph(log):
     return net, initial_marking, final_marking
 
 
-def analyze_graph(log, net, initial_marking, final_marking):
+def analyze_graph(log, net, initial_marking, final_marking, df):
     logging.info("Анализ графа сети Петри")
 
-    # Анализ отклонений
     aligned_traces = token_replay.apply(log, net, initial_marking, final_marking)
     deviations = [trace for trace in aligned_traces if not trace['trace_is_fit']]
     logging.info(f"Количество отклоняющихся трасс: {len(deviations)}")
 
-    # Анализ продолжительности случаев
     case_durations = case_statistics.get_all_case_durations(log, parameters={
         case_statistics.Parameters.TIMESTAMP_KEY: 'time:timestamp'})
     mean_duration = sum(case_durations) / len(case_durations)
@@ -87,12 +93,25 @@ def analyze_graph(log, net, initial_marking, final_marking):
     logging.info(f"Стандартное отклонение продолжительности случая: {std_duration}")
     logging.info(f"Количество просроченных случаев: {len(late_cases)}")
 
-    # Анализ узких мест
     resource_counts = attributes_filter.get_attribute_values(log, "org:resource")
     bottleneck = max(resource_counts, key=resource_counts.get)
     logging.info(f"Узкое место (ресурс с наибольшей нагрузкой): {bottleneck}")
 
-    logging.info("Анализ успешно завершен")
+    import matplotlib.pyplot as plt
+    plt.hist(case_durations, bins=50)
+    plt.title('Распределение времени выполнения случаев')
+    plt.xlabel('Время выполнения (секунды)')
+    plt.ylabel('Количество случаев')
+    plt.show()
+
+    activity_counts = attributes_filter.get_attribute_values(log, "concept:name")
+    logging.info(f"Частота выполнения этапов процесса: {activity_counts}")
+
+    numeric_df = df.select_dtypes(include=[np.number])
+    numeric_df = numeric_df.apply(pd.to_numeric, errors='coerce')
+
+    numeric_df.fillna(0, inplace=True)
+
     return len(deviations), len(late_cases), bottleneck
 
 
@@ -100,8 +119,7 @@ def analyze_cycles(log):
     logging.info("Анализ на наличие циклов")
     try:
         cyclic_traces = [
-            trace for trace in log if
-            len(set(event["concept:name"] for event in trace if "concept:name" in event)) < len(trace)
+            trace for trace in log if len(set(trace['concept:name'])) < len(trace['concept:name'])
         ]
         logging.info(f"Количество циклов в трассах: {len(cyclic_traces)}")
         return len(cyclic_traces)
@@ -112,20 +130,14 @@ def analyze_cycles(log):
 
 def main():
     logging.info("Выполнение практической работы предполагает решение следующих задач:")
-    logging.info("1. Выполнить предварительную обработку данных")
     log = read_and_parse_xes('InternationalDeclarations.xes')
     df = convert_log_to_dataframe(log)
     df = preprocess_data(df)
 
     logging.info("2. Построить граф для выбранного бизнес-процесса")
     net, initial_marking, final_marking = construct_graph(log)
-    logging.info("Построение графа завершено, переход к анализу")
 
-    logging.info(
-        "3. Провести анализ полученного графа на предмет наличия в нем узких мест, циклов, отклонений и оптимальных путей.")
-    logging.info(
-        "Определить и проанализировать те экземпляры процесса, выполнение которых длится намного дольше остальных")
-    num_deviations, num_late_cases, bottleneck = analyze_graph(log, net, initial_marking, final_marking)
+    num_deviations, num_late_cases, bottleneck = analyze_graph(log, net, initial_marking, final_marking, df)
     num_cycles = analyze_cycles(log)
 
     logging.info(f"Количество отклоняющихся трасс: {num_deviations}")
@@ -133,8 +145,6 @@ def main():
     logging.info(f"Количество циклов в трассах: {num_cycles}")
     logging.info(f"Узкое место в процессе: {bottleneck}")
 
-    logging.info("4. Предложить варианты оптимизации выбранного вами бизнес-процесса.")
-    logging.info("Предложение: перераспределить нагрузку с узкого места и устранить циклы в трассах.")
 
 
 if __name__ == "__main__":
