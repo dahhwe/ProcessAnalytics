@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pm4py
 from pm4py.algo.conformance.tokenreplay import algorithm as token_replay
+from pm4py.algo.filtering.log.attributes import attributes_filter
 from pm4py.statistics.traces.generic.log import case_statistics
 from pm4py.visualization.petri_net import visualizer as pn_visualizer
 
@@ -62,8 +63,8 @@ def construct_graph(log):
     logging.info("Построение графа сети Петри")
     net, initial_marking, final_marking = pm4py.discover_petri_net_inductive(log)
     gviz = pn_visualizer.apply(net, initial_marking, final_marking, parameters={"format": "svg"})
-    pn_visualizer.view(gviz)
-    logging.info("Граф сети Петри успешно построен")
+    pn_visualizer.save(gviz, "petri_net_visualization.svg")
+    logging.info("Граф сети Петри сохранён в файл 'petri_net_visualization.svg'")
     return net, initial_marking, final_marking
 
 
@@ -86,8 +87,27 @@ def analyze_graph(log, net, initial_marking, final_marking):
     logging.info(f"Стандартное отклонение продолжительности случая: {std_duration}")
     logging.info(f"Количество просроченных случаев: {len(late_cases)}")
 
+    # Анализ узких мест
+    resource_counts = attributes_filter.get_attribute_values(log, "org:resource")
+    bottleneck = max(resource_counts, key=resource_counts.get)
+    logging.info(f"Узкое место (ресурс с наибольшей нагрузкой): {bottleneck}")
+
     logging.info("Анализ успешно завершен")
-    return len(deviations), len(late_cases)
+    return len(deviations), len(late_cases), bottleneck
+
+
+def analyze_cycles(log):
+    logging.info("Анализ на наличие циклов")
+    try:
+        cyclic_traces = [
+            trace for trace in log if
+            len(set(event["concept:name"] for event in trace if "concept:name" in event)) < len(trace)
+        ]
+        logging.info(f"Количество циклов в трассах: {len(cyclic_traces)}")
+        return len(cyclic_traces)
+    except Exception as e:
+        logging.error(f"Ошибка при анализе циклов: {e}")
+        return 0
 
 
 def main():
@@ -104,13 +124,17 @@ def main():
     logging.info(
         "3. Провести анализ полученного графа на предмет наличия в нем узких мест, циклов, отклонений и оптимальных путей.")
     logging.info(
-        "Определить и проанализировать те ��кземпляры процесса, выполнение которых длится намного дольше остальных")
-    num_deviations, num_late_cases = analyze_graph(log, net, initial_marking, final_marking)
+        "Определить и проанализировать те экземпляры процесса, выполнение которых длится намного дольше остальных")
+    num_deviations, num_late_cases, bottleneck = analyze_graph(log, net, initial_marking, final_marking)
+    num_cycles = analyze_cycles(log)
 
     logging.info(f"Количество отклоняющихся трасс: {num_deviations}")
     logging.info(f"Количество просроченных случаев: {num_late_cases}")
+    logging.info(f"Количество циклов в трассах: {num_cycles}")
+    logging.info(f"Узкое место в процессе: {bottleneck}")
 
-    # logging.info("4. Предложить варианты оптимизации выбранного вами бизнес-процесса.")
+    logging.info("4. Предложить варианты оптимизации выбранного вами бизнес-процесса.")
+    logging.info("Предложение: перераспределить нагрузку с узкого места и устранить циклы в трассах.")
 
 
 if __name__ == "__main__":
